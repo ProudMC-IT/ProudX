@@ -27,6 +27,8 @@ tasks {
     }
 
     shadowJar {
+        archiveFileName.set("ProudX.jar")
+
         filesMatching("META-INF/org/apache/logging/log4j/core/config/plugins/**") {
             duplicatesStrategy = DuplicatesStrategy.INCLUDE
         }
