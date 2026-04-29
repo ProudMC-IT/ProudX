@@ -109,19 +109,24 @@ public final class PreLoginEvent implements ResultedEvent<PreLoginEvent.PreLogin
   public static final class PreLoginComponentResult implements ResultedEvent.Result {
 
     private static final PreLoginComponentResult ALLOWED = new PreLoginComponentResult(
-        Result.ALLOWED, null);
+        Result.ALLOWED, null, null);
     private static final PreLoginComponentResult FORCE_ONLINEMODE = new PreLoginComponentResult(
-        Result.FORCE_ONLINE, null);
+        Result.FORCE_ONLINE, null, null);
+    private static final PreLoginComponentResult TRY_KEY_AUTHENTICATION = new PreLoginComponentResult(
+        Result.TRY_KEY_AUTHENTICATION, null, null);
     private static final PreLoginComponentResult FORCE_OFFLINEMODE = new PreLoginComponentResult(
-        Result.FORCE_OFFLINE, null);
+        Result.FORCE_OFFLINE, null, null);
 
     private final Result result;
     private final net.kyori.adventure.text.Component reason;
+    private final UUID expectedProfileUuid;
 
     private PreLoginComponentResult(Result result,
-        net.kyori.adventure.text.@Nullable Component reason) {
+        net.kyori.adventure.text.@Nullable Component reason,
+        @Nullable UUID expectedProfileUuid) {
       this.result = result;
       this.reason = reason;
+      this.expectedProfileUuid = expectedProfileUuid;
     }
 
     @Override
@@ -137,6 +142,14 @@ public final class PreLoginEvent implements ResultedEvent<PreLoginEvent.PreLogin
       return result == Result.FORCE_ONLINE;
     }
 
+    public boolean isKeyAuthenticationAllowed() {
+      return result == Result.TRY_KEY_AUTHENTICATION;
+    }
+
+    public Optional<UUID> getExpectedProfileUuid() {
+      return Optional.ofNullable(expectedProfileUuid);
+    }
+
     public boolean isForceOfflineMode() {
       return result == Result.FORCE_OFFLINE;
     }
@@ -147,6 +160,7 @@ public final class PreLoginEvent implements ResultedEvent<PreLoginEvent.PreLogin
         case ALLOWED -> "allowed";
         case FORCE_OFFLINE -> "allowed with force offline mode";
         case FORCE_ONLINE -> "allowed with online mode";
+        case TRY_KEY_AUTHENTICATION -> "allowed with key authentication fallback";
         default -> "denied";
       };
     }
@@ -172,6 +186,33 @@ public final class PreLoginEvent implements ResultedEvent<PreLoginEvent.PreLogin
     }
 
     /**
+     * Returns a result indicating the connection will attempt to prove premium ownership using a
+     * Mojang-signed modern player key without asking the client to join Mojang's session server.
+     * If the key proof is missing or invalid, the connection continues in offline mode instead of
+     * showing the client's "Invalid session" screen.
+     *
+     * <p>This is intentionally weaker than full online-mode authentication and only works for
+     * modern clients that provide a valid secure profile key.</p>
+     *
+     * @return the result
+     */
+    public static PreLoginComponentResult tryKeyAuthentication() {
+      return TRY_KEY_AUTHENTICATION;
+    }
+
+    /**
+     * Returns a result indicating the connection will attempt to prove premium ownership by
+     * matching the modern login profile UUID against the supplied expected Mojang UUID.
+     *
+     * @param expectedProfileUuid the expected Mojang profile UUID
+     * @return the result
+     */
+    public static PreLoginComponentResult tryKeyAuthentication(UUID expectedProfileUuid) {
+      Preconditions.checkNotNull(expectedProfileUuid, "expectedProfileUuid");
+      return new PreLoginComponentResult(Result.TRY_KEY_AUTHENTICATION, null, expectedProfileUuid);
+    }
+
+    /**
      * Returns a result indicating the connection will be allowed through the proxy, but the
      * connection will be forced to use offline mode even when the proxy is running in online mode.
      *
@@ -189,12 +230,13 @@ public final class PreLoginEvent implements ResultedEvent<PreLoginEvent.PreLogin
      */
     public static PreLoginComponentResult denied(net.kyori.adventure.text.Component reason) {
       Preconditions.checkNotNull(reason, "reason");
-      return new PreLoginComponentResult(Result.DISALLOWED, reason);
+      return new PreLoginComponentResult(Result.DISALLOWED, reason, null);
     }
 
     private enum Result {
       ALLOWED,
       FORCE_ONLINE,
+      TRY_KEY_AUTHENTICATION,
       FORCE_OFFLINE,
       DISALLOWED
     }
