@@ -52,6 +52,7 @@ import java.security.KeyPair;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -69,6 +70,10 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       System.getProperty("mojang.sessionserver",
               "https://sessionserver.mojang.com/session/minecraft/hasJoined")
           .concat("?username=%s&serverId=%s");
+  private static final String MOJANG_PROFILE_URL =
+      System.getProperty("mojang.sessionserver",
+              "https://sessionserver.mojang.com/session/minecraft/profile")
+          .concat("/%s?unsigned=false");
 
   private final VelocityServer server;
   private final MinecraftConnection mcConnection;
@@ -77,6 +82,8 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
   private byte[] verify = EMPTY_BYTE_ARRAY;
   private LoginState currentState = LoginState.LOGIN_PACKET_EXPECTED;
   private final boolean forceKeyAuthentication;
+  private boolean keyAuthenticationFallback;
+  private @MonotonicNonNull UUID expectedKeyAuthenticationProfileUuid;
 
   InitialLoginSessionHandler(VelocityServer server, MinecraftConnection mcConnection,
                              LoginInboundConnection inbound) {
@@ -142,10 +149,17 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
         }
 
         mcConnection.eventLoop().execute(() -> {
-          if (!result.isForceOfflineMode()
+          if (result.isKeyAuthenticationAllowed()) {
+            EncryptionRequestPacket request = generateEncryptionRequest(false);
+            this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
+            this.keyAuthenticationFallback = true;
+            this.expectedKeyAuthenticationProfileUuid = result.getExpectedProfileUuid().orElse(null);
+            mcConnection.write(request);
+            this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
+          } else if (!result.isForceOfflineMode()
               && (server.getConfiguration().isOnlineMode() || result.isOnlineModeAllowed())) {
             // Request encryption.
-            EncryptionRequestPacket request = generateEncryptionRequest();
+            EncryptionRequestPacket request = generateEncryptionRequest(true);
             this.verify = Arrays.copyOf(request.getVerifyToken(), 4);
             mcConnection.write(request);
             this.currentState = LoginState.ENCRYPTION_REQUEST_SENT;
@@ -200,6 +214,11 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
 
       byte[] decryptedSharedSecret = decryptRsa(serverKeyPair, packet.getSharedSecret());
       String serverId = generateServerId(decryptedSharedSecret, serverKeyPair.getPublic());
+
+      if (keyAuthenticationFallback) {
+        completeKeyAuthenticationFallback(login, decryptedSharedSecret);
+        return true;
+      }
 
       String playerIp = ((InetSocketAddress) mcConnection.getRemoteAddress()).getHostString();
       String url = String.format(MOJANG_HASJOINED_URL,
@@ -258,8 +277,16 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
                   new AuthSessionHandler(server, inbound, profile, true, serverId));
             } else if (response.statusCode() == 204) {
               // Apparently an offline-mode user logged onto this online-mode proxy.
-              inbound.disconnect(
-                  Component.translatable("velocity.error.online-mode-only", NamedTextColor.RED));
+              inbound.disconnect(Component.text()
+                  .append(Component.text("[", NamedTextColor.DARK_GRAY))
+                  .append(Component.text("ProudMC", NamedTextColor.AQUA))
+                  .append(Component.text("] ", NamedTextColor.DARK_GRAY))
+                  .append(Component.text("Accesso rifiutato", NamedTextColor.RED))
+                  .append(Component.newline())
+                  .append(Component.text(
+                      "Questo nickname premium richiede un account Minecraft premium autenticato.",
+                      NamedTextColor.GRAY))
+                  .build());
             } else {
               // Something else went wrong
               logger.error(
@@ -284,13 +311,86 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     return true;
   }
 
-  private EncryptionRequestPacket generateEncryptionRequest() {
+  private void completeKeyAuthenticationFallback(ServerLoginPacket login, byte[] decryptedSharedSecret) {
+    try {
+      mcConnection.enableEncryption(decryptedSharedSecret);
+    } catch (GeneralSecurityException e) {
+      logger.error("Unable to enable encryption for key-authenticated connection", e);
+      mcConnection.close(true);
+      return;
+    }
+
+    Optional<GameProfile> verifiedProfile = verifiedKeyProfile(login);
+    if (verifiedProfile.isEmpty()) {
+      mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
+          new AuthSessionHandler(server, inbound, GameProfile.forOfflinePlayer(login.getUsername()), false, null));
+      return;
+    }
+
+    completeKeyAuthenticatedProfile(verifiedProfile.get());
+  }
+
+  private Optional<GameProfile> verifiedKeyProfile(ServerLoginPacket login) {
+    IdentifiedKey playerKey = inbound.getIdentifiedKey();
+    UUID holderUuid = login.getHolderUuid();
+    UUID expectedProfileUuid = expectedKeyAuthenticationProfileUuid;
+    if (expectedProfileUuid != null && expectedProfileUuid.equals(holderUuid)) {
+      return Optional.of(new GameProfile(holderUuid, login.getUsername(), java.util.List.of()));
+    }
+    if (playerKey == null || holderUuid == null) {
+      return Optional.empty();
+    }
+    if (!holderUuid.equals(playerKey.getSignatureHolder())) {
+      return Optional.empty();
+    }
+    return Optional.of(new GameProfile(holderUuid, login.getUsername(), java.util.List.of()));
+  }
+
+  private void completeKeyAuthenticatedProfile(GameProfile verifiedProfile) {
+    String profileUrl = String.format(MOJANG_PROFILE_URL, verifiedProfile.getUndashedId());
+    final HttpRequest httpRequest = HttpRequest.newBuilder()
+        .setHeader("User-Agent", server.getVersion().getName() + "/" + server.getVersion().getVersion())
+        .uri(URI.create(profileUrl))
+        .build();
+    final HttpClient httpClient = server.createHttpClient();
+    httpClient.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofString())
+        .whenCompleteAsync((response, throwable) -> {
+          if (mcConnection.isClosed()) {
+            return;
+          }
+
+          GameProfile profile = verifiedProfile;
+          if (throwable != null) {
+            logger.warn("Unable to fetch profile properties for key-authenticated player {}",
+                verifiedProfile.getName(), throwable);
+          } else if (response.statusCode() == 200) {
+            profile = GENERAL_GSON.fromJson(response.body(), GameProfile.class)
+                .withName(verifiedProfile.getName());
+          } else {
+            logger.warn("Got an unexpected error code {} whilst fetching profile properties for {}",
+                response.statusCode(), verifiedProfile.getName());
+          }
+
+          mcConnection.setActiveSessionHandler(StateRegistry.LOGIN,
+              new AuthSessionHandler(server, inbound, profile, true, null));
+        }, mcConnection.eventLoop())
+        .thenRun(() -> {
+          try {
+            httpClient.close();
+          } catch (Exception e) {
+            logger.error("An unknown error occurred while trying to close an HttpClient", e);
+          }
+        });
+  }
+
+  private EncryptionRequestPacket generateEncryptionRequest(boolean shouldAuthenticate) {
     byte[] verify = new byte[4];
     ThreadLocalRandom.current().nextBytes(verify);
 
     EncryptionRequestPacket request = new EncryptionRequestPacket();
     request.setPublicKey(server.getServerKeyPair().getPublic().getEncoded());
     request.setVerifyToken(verify);
+    request.setShouldAuthenticate(shouldAuthenticate);
     return request;
   }
 
