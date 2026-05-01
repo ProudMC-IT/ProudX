@@ -31,6 +31,7 @@ import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.crypto.IdentifiedKey;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.VelocityServer;
+import com.velocitypowered.proxy.config.VelocityConfiguration.ProudXAuthMessages;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.crypto.IdentifiedKeyImpl;
@@ -44,9 +45,11 @@ import com.velocitypowered.proxy.util.VelocityProperties;
 import io.netty.buffer.ByteBuf;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.SocketTimeoutException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.MessageDigest;
@@ -55,7 +58,6 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -101,8 +103,7 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     IdentifiedKey playerKey = packet.getPlayerKey();
     if (playerKey != null) {
       if (playerKey.hasExpired()) {
-        inbound.disconnect(
-            Component.translatable("multiplayer.disconnect.invalid_public_key_signature"));
+        inbound.disconnect(authMessages().expiredPublicKey(packet.getUsername()));
         return true;
       }
 
@@ -115,13 +116,13 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       }
 
       if (!isKeyValid) {
-        inbound.disconnect(Component.translatable("multiplayer.disconnect.invalid_public_key"));
+        inbound.disconnect(authMessages().invalidPublicKey(packet.getUsername()));
         return true;
       }
     } else if (mcConnection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_19)
         && forceKeyAuthentication
         && mcConnection.getProtocolVersion().lessThan(ProtocolVersion.MINECRAFT_1_19_3)) {
-      inbound.disconnect(Component.translatable("multiplayer.disconnect.missing_public_key"));
+      inbound.disconnect(authMessages().missingPublicKey(packet.getUsername()));
       return true;
     }
     inbound.setPlayerKey(playerKey);
@@ -203,12 +204,14 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
         IdentifiedKey playerKey = inbound.getIdentifiedKey();
         if (!playerKey.verifyDataSignature(packet.getVerifyToken(), verify,
             Longs.toByteArray(packet.getSalt()))) {
-          throw new IllegalStateException("Invalid client public signature.");
+          inbound.disconnect(authMessages().encryptionVerifyFailed(login.getUsername()));
+          return true;
         }
       } else {
         byte[] decryptedVerifyToken = decryptRsa(serverKeyPair, packet.getVerifyToken());
         if (!MessageDigest.isEqual(verify, decryptedVerifyToken)) {
-          throw new IllegalStateException("Unable to successfully decrypt the verification token.");
+          inbound.disconnect(authMessages().encryptionVerifyFailed(login.getUsername()));
+          return true;
         }
       }
 
@@ -244,7 +247,9 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
 
             if (throwable != null) {
               logger.error("Unable to authenticate player", throwable);
-              inbound.disconnect(Component.translatable("multiplayer.disconnect.authservers_down"));
+              inbound.disconnect(isTimeout(throwable)
+                  ? authMessages().mojangTimeout(login.getUsername())
+                  : authMessages().mojangUnavailable(login.getUsername()));
               return;
             }
 
@@ -261,15 +266,24 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
             }
 
             if (response.statusCode() == 200) {
-              final GameProfile profile = GENERAL_GSON.fromJson(response.body(),
-                  GameProfile.class);
+              final GameProfile profile;
+              try {
+                profile = GENERAL_GSON.fromJson(response.body(), GameProfile.class);
+                if (profile == null) {
+                  throw new IllegalStateException("Empty profile response");
+                }
+              } catch (RuntimeException e) {
+                logger.error("Unable to parse Mojang profile response for {}", login.getUsername(), e);
+                inbound.disconnect(authMessages().malformedProfile(login.getUsername()));
+                return;
+              }
               // Not so fast, now we verify the public key for 1.19.1+
               if (inbound.getIdentifiedKey() != null
                   && inbound.getIdentifiedKey().getKeyRevision() == IdentifiedKey.Revision.LINKED_V2
                   && inbound.getIdentifiedKey() instanceof final IdentifiedKeyImpl key) {
                 if (!key.internalAddHolder(profile.getId())) {
-                  inbound.disconnect(
-                      Component.translatable("multiplayer.disconnect.invalid_public_key"));
+                  inbound.disconnect(authMessages().profileKeyMismatch(login.getUsername()));
+                  return;
                 }
               }
               // All went well, initialize the session.
@@ -277,22 +291,14 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
                   new AuthSessionHandler(server, inbound, profile, true, serverId));
             } else if (response.statusCode() == 204) {
               // Apparently an offline-mode user logged onto this online-mode proxy.
-              inbound.disconnect(Component.text()
-                  .append(Component.text("[", NamedTextColor.DARK_GRAY))
-                  .append(Component.text("ProudMC", NamedTextColor.AQUA))
-                  .append(Component.text("] ", NamedTextColor.DARK_GRAY))
-                  .append(Component.text("Accesso rifiutato", NamedTextColor.RED))
-                  .append(Component.newline())
-                  .append(Component.text(
-                      "Questo nickname premium richiede un account Minecraft premium autenticato.",
-                      NamedTextColor.GRAY))
-                  .build());
+              inbound.disconnect(authMessages().hasJoinedEmpty(login.getUsername()));
             } else {
               // Something else went wrong
               logger.error(
                   "Got an unexpected error code {} whilst contacting Mojang to log in {} ({})",
                   response.statusCode(), login.getUsername(), playerIp);
-              inbound.disconnect(Component.translatable("multiplayer.disconnect.authservers_down"));
+              inbound.disconnect(authMessages().mojangUnexpectedStatus(login.getUsername(),
+                  response.statusCode()));
             }
           }, mcConnection.eventLoop())
           .thenRun(() -> {
@@ -306,7 +312,7 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
           });
     } catch (GeneralSecurityException e) {
       logger.error("Unable to enable encryption", e);
-      mcConnection.close(true);
+      inbound.disconnect(authMessages().encryptionVerifyFailed(login.getUsername()));
     }
     return true;
   }
@@ -392,6 +398,21 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     request.setVerifyToken(verify);
     request.setShouldAuthenticate(shouldAuthenticate);
     return request;
+  }
+
+  private ProudXAuthMessages authMessages() {
+    return server.getConfiguration().getProudXAuthMessages();
+  }
+
+  private boolean isTimeout(Throwable throwable) {
+    Throwable current = throwable;
+    while (current != null) {
+      if (current instanceof HttpTimeoutException || current instanceof SocketTimeoutException) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
   }
 
   @Override

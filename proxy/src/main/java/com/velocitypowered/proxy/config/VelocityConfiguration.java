@@ -48,6 +48,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -96,6 +97,7 @@ public class VelocityConfiguration implements ProxyConfig {
   private boolean forceKeyAuthentication = true; // Added in 1.19
   @Expose
   private PacketLimiterConfig packetLimiterConfig = PacketLimiterConfig.DEFAULT;
+  private final ProudXAuthMessages proudXAuthMessages;
 
   private VelocityConfiguration(Servers servers, ForcedHosts forcedHosts, Advanced advanced,
       Query query, Metrics metrics) {
@@ -104,6 +106,7 @@ public class VelocityConfiguration implements ProxyConfig {
     this.advanced = advanced;
     this.query = query;
     this.metrics = metrics;
+    this.proudXAuthMessages = new ProudXAuthMessages(null);
   }
 
   private VelocityConfiguration(String bind, String motd, int showMaxPlayers, boolean onlineMode,
@@ -112,7 +115,8 @@ public class VelocityConfiguration implements ProxyConfig {
       boolean onlineModeKickExistingPlayers, PingPassthroughMode pingPassthrough,
       boolean samplePlayersInPing, boolean enablePlayerAddressLogging, Servers servers,
       ForcedHosts forcedHosts, Advanced advanced, Query query, Metrics metrics,
-      boolean forceKeyAuthentication, PacketLimiterConfig packetLimiterConfig) {
+      boolean forceKeyAuthentication, PacketLimiterConfig packetLimiterConfig,
+      ProudXAuthMessages proudXAuthMessages) {
     this.bind = bind;
     this.motd = motd;
     this.showMaxPlayers = showMaxPlayers;
@@ -132,6 +136,7 @@ public class VelocityConfiguration implements ProxyConfig {
     this.metrics = metrics;
     this.forceKeyAuthentication = forceKeyAuthentication;
     this.packetLimiterConfig = packetLimiterConfig;
+    this.proudXAuthMessages = proudXAuthMessages;
   }
 
   /**
@@ -454,6 +459,10 @@ public class VelocityConfiguration implements ProxyConfig {
     return packetLimiterConfig;
   }
 
+  public ProudXAuthMessages getProudXAuthMessages() {
+    return proudXAuthMessages;
+  }
+
   @Override
   public String toString() {
     return MoreObjects.toStringHelper(this)
@@ -472,6 +481,7 @@ public class VelocityConfiguration implements ProxyConfig {
         .add("enablePlayerAddressLogging", enablePlayerAddressLogging)
         .add("forceKeyAuthentication", forceKeyAuthentication)
         .add("packetLimiterConfig", packetLimiterConfig)
+        .add("proudXAuthMessages", proudXAuthMessages)
         .toString();
   }
 
@@ -551,6 +561,10 @@ public class VelocityConfiguration implements ProxyConfig {
       final CommentedConfig advancedConfig = config.get("advanced");
       final CommentedConfig queryConfig = config.get("query");
       final CommentedConfig metricsConfig = config.get("metrics");
+      final CommentedConfig proudXConfig = config.get("proudx");
+      final CommentedConfig proudXAuthMessagesConfig = proudXConfig == null
+          ? null
+          : proudXConfig.get("auth-messages");
       final PlayerInfoForwarding forwardingMode = config.getEnumOrElse(
               "player-info-forwarding-mode", PlayerInfoForwarding.NONE);
       final PingPassthroughMode pingPassthroughMode = config.getEnumOrElse("ping-passthrough",
@@ -597,7 +611,8 @@ public class VelocityConfiguration implements ProxyConfig {
               new Query(queryConfig),
               new Metrics(metricsConfig),
               forceKeyAuthentication,
-              packetLimiterConfig
+              packetLimiterConfig,
+              new ProudXAuthMessages(proudXAuthMessagesConfig)
       );
     }
   }
@@ -620,6 +635,113 @@ public class VelocityConfiguration implements ProxyConfig {
 
   public boolean isOnlineModeKickExistingPlayers() {
     return onlineModeKickExistingPlayers;
+  }
+
+  public static final class ProudXAuthMessages {
+
+    private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.builder()
+        .character('&')
+        .hexColors()
+        .useUnusualXRepeatedCharacterHexFormat()
+        .build();
+
+    private String hasJoinedEmpty = "&8[&x&0&9&a&d&d&3ProudMC&8] &cAccesso rifiutato\n"
+        + "&7Questo nickname premium richiede un account Minecraft premium autenticato.\n"
+        + "&eApri il launcher ufficiale, riavvia il client e riprova.";
+    private String mojangTimeout = "&8[&x&0&9&a&d&d&3ProudMC&8] &cVerifica Mojang scaduta\n"
+        + "&7I server Mojang non hanno risposto in tempo.\n"
+        + "&eRiprova tra qualche secondo.";
+    private String mojangUnavailable = "&8[&x&0&9&a&d&d&3ProudMC&8] &cServizi Mojang non raggiungibili\n"
+        + "&7Non possiamo completare ora la verifica premium.\n"
+        + "&eRiprova tra poco.";
+    private String mojangUnexpectedStatus = "&8[&x&0&9&a&d&d&3ProudMC&8] &cVerifica Mojang non riuscita\n"
+        + "&7Sessionserver ha risposto con codice &f{status}&7.\n"
+        + "&eRiprova tra poco.";
+    private String expiredPublicKey = "&8[&x&0&9&a&d&d&3ProudMC&8] &cChiave profilo scaduta\n"
+        + "&7Il tuo client ha inviato una chiave sicura non piu valida.\n"
+        + "&eRiavvia Minecraft e riprova.";
+    private String invalidPublicKey = "&8[&x&0&9&a&d&d&3ProudMC&8] &cChiave profilo non valida\n"
+        + "&7La verifica sicura del profilo non e coerente.\n"
+        + "&eRiavvia Minecraft dal launcher ufficiale.";
+    private String missingPublicKey = "&8[&x&0&9&a&d&d&3ProudMC&8] &cClient non verificabile\n"
+        + "&7Questo accesso richiede una chiave profilo sicura.\n"
+        + "&eAggiorna o riavvia il client e riprova.";
+    private String profileKeyMismatch = "&8[&x&0&9&a&d&d&3ProudMC&8] &cProfilo premium non coerente\n"
+        + "&7La chiave sicura non corrisponde al profilo autenticato.\n"
+        + "&eRientra con il launcher ufficiale.";
+    private String encryptionVerifyFailed = "&8[&x&0&9&a&d&d&3ProudMC&8] &cHandshake sicuro fallito\n"
+        + "&7La verifica crittografica della sessione non e valida.\n"
+        + "&eRiavvia il client e riprova.";
+    private String malformedProfile = "&8[&x&0&9&a&d&d&3ProudMC&8] &cRisposta Mojang non valida\n"
+        + "&7Non siamo riusciti a leggere il profilo premium.\n"
+        + "&eRiprova tra poco.";
+
+    private ProudXAuthMessages(CommentedConfig config) {
+      if (config != null) {
+        this.hasJoinedEmpty = config.getOrElse("has-joined-empty", hasJoinedEmpty);
+        this.mojangTimeout = config.getOrElse("mojang-timeout", mojangTimeout);
+        this.mojangUnavailable = config.getOrElse("mojang-unavailable", mojangUnavailable);
+        this.mojangUnexpectedStatus = config.getOrElse("mojang-unexpected-status", mojangUnexpectedStatus);
+        this.expiredPublicKey = config.getOrElse("expired-public-key", expiredPublicKey);
+        this.invalidPublicKey = config.getOrElse("invalid-public-key", invalidPublicKey);
+        this.missingPublicKey = config.getOrElse("missing-public-key", missingPublicKey);
+        this.profileKeyMismatch = config.getOrElse("profile-key-mismatch", profileKeyMismatch);
+        this.encryptionVerifyFailed = config.getOrElse("encryption-verify-failed", encryptionVerifyFailed);
+        this.malformedProfile = config.getOrElse("malformed-profile", malformedProfile);
+      }
+    }
+
+    public net.kyori.adventure.text.Component hasJoinedEmpty(String username) {
+      return render(hasJoinedEmpty, username, -1);
+    }
+
+    public net.kyori.adventure.text.Component mojangTimeout(String username) {
+      return render(mojangTimeout, username, -1);
+    }
+
+    public net.kyori.adventure.text.Component mojangUnavailable(String username) {
+      return render(mojangUnavailable, username, -1);
+    }
+
+    public net.kyori.adventure.text.Component mojangUnexpectedStatus(String username, int status) {
+      return render(mojangUnexpectedStatus, username, status);
+    }
+
+    public net.kyori.adventure.text.Component expiredPublicKey(String username) {
+      return render(expiredPublicKey, username, -1);
+    }
+
+    public net.kyori.adventure.text.Component invalidPublicKey(String username) {
+      return render(invalidPublicKey, username, -1);
+    }
+
+    public net.kyori.adventure.text.Component missingPublicKey(String username) {
+      return render(missingPublicKey, username, -1);
+    }
+
+    public net.kyori.adventure.text.Component profileKeyMismatch(String username) {
+      return render(profileKeyMismatch, username, -1);
+    }
+
+    public net.kyori.adventure.text.Component encryptionVerifyFailed(String username) {
+      return render(encryptionVerifyFailed, username, -1);
+    }
+
+    public net.kyori.adventure.text.Component malformedProfile(String username) {
+      return render(malformedProfile, username, -1);
+    }
+
+    private net.kyori.adventure.text.Component render(String raw, String username, int status) {
+      String message = raw
+          .replace("{username}", username == null ? "unknown" : username)
+          .replace("{status}", status < 0 ? "unknown" : Integer.toString(status));
+      return LEGACY.deserialize(message);
+    }
+
+    @Override
+    public String toString() {
+      return "ProudXAuthMessages{customizable=true}";
+    }
   }
 
   private static class Servers {

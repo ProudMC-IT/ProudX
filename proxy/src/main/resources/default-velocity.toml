@@ -74,6 +74,21 @@ sample-players-in-ping = false
 # If not enabled (default is true) player IP addresses will be replaced by <ip address withheld> in logs
 enable-player-address-logging = true
 
+[proudx.auth-messages]
+# ProudX custom messages for Mojang/online-mode authentication failures.
+# Supports legacy/Bungee color codes with &: &a, &c, &l, &r and hex as &x&R&R&G&G&B&B.
+# Available placeholders: {username}, {status}.
+has-joined-empty = "&8[&x&0&9&a&d&d&3ProudMC&8] &cAccesso rifiutato\n&7Questo nickname premium richiede un account Minecraft premium autenticato.\n&eApri il launcher ufficiale, riavvia il client e riprova."
+mojang-timeout = "&8[&x&0&9&a&d&d&3ProudMC&8] &cVerifica Mojang scaduta\n&7I server Mojang non hanno risposto in tempo.\n&eRiprova tra qualche secondo."
+mojang-unavailable = "&8[&x&0&9&a&d&d&3ProudMC&8] &cServizi Mojang non raggiungibili\n&7Non possiamo completare ora la verifica premium.\n&eRiprova tra poco."
+mojang-unexpected-status = "&8[&x&0&9&a&d&d&3ProudMC&8] &cVerifica Mojang non riuscita\n&7Sessionserver ha risposto con codice &f{status}&7.\n&eRiprova tra poco."
+expired-public-key = "&8[&x&0&9&a&d&d&3ProudMC&8] &cChiave profilo scaduta\n&7Il tuo client ha inviato una chiave sicura non piu valida.\n&eRiavvia Minecraft e riprova."
+invalid-public-key = "&8[&x&0&9&a&d&d&3ProudMC&8] &cChiave profilo non valida\n&7La verifica sicura del profilo non e coerente.\n&eRiavvia Minecraft dal launcher ufficiale."
+missing-public-key = "&8[&x&0&9&a&d&d&3ProudMC&8] &cClient non verificabile\n&7Questo accesso richiede una chiave profilo sicura.\n&eAggiorna o riavvia il client e riprova."
+profile-key-mismatch = "&8[&x&0&9&a&d&d&3ProudMC&8] &cProfilo premium non coerente\n&7La chiave sicura non corrisponde al profilo autenticato.\n&eRientra con il launcher ufficiale."
+encryption-verify-failed = "&8[&x&0&9&a&d&d&3ProudMC&8] &cHandshake sicuro fallito\n&7La verifica crittografica della sessione non e valida.\n&eRiavvia il client e riprova."
+malformed-profile = "&8[&x&0&9&a&d&d&3ProudMC&8] &cRisposta Mojang non valida\n&7Non siamo riusciti a leggere il profilo premium.\n&eRiprova tra poco."
+
 [packet-limiter]
 interval = 7
 packets-per-second = 500
