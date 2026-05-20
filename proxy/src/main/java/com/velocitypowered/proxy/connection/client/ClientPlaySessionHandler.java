@@ -65,6 +65,7 @@ import com.velocitypowered.proxy.protocol.packet.chat.keyed.KeyedPlayerCommandPa
 import com.velocitypowered.proxy.protocol.packet.chat.legacy.LegacyChatHandler;
 import com.velocitypowered.proxy.protocol.packet.chat.legacy.LegacyChatPacket;
 import com.velocitypowered.proxy.protocol.packet.chat.legacy.LegacyCommandHandler;
+import com.velocitypowered.proxy.protocol.packet.chat.session.SessionChatSessionUpdatePacket;
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionChatHandler;
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionCommandHandler;
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionPlayerChatPacket;
@@ -231,6 +232,17 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
     }
 
     return this.chatHandler.handlePlayerChat(packet);
+  }
+
+  @Override
+  public boolean handle(SessionChatSessionUpdatePacket packet) {
+    if (player.isProudxSuppressBackendProfileKey()) {
+      logger.info("[ProudX] dropped delegated chat session update: proxyPlayer={} backendProfile={}",
+          player.getUsername(), player.getProudxBackendGameProfile().getName());
+      return true;
+    }
+
+    return false;
   }
 
   @Override

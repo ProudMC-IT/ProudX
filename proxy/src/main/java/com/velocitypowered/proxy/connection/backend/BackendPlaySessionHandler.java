@@ -35,6 +35,7 @@ import com.velocitypowered.api.event.proxy.ProxyPingEvent;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.api.proxy.player.ResourcePackInfo;
+import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.command.CommandGraphInjector;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
@@ -76,6 +77,10 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.handler.timeout.ReadTimeoutException;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import net.kyori.adventure.key.Key;
 import org.apache.logging.log4j.LogManager;
@@ -346,14 +351,118 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(UpsertPlayerInfoPacket packet) {
+    sanitizeProudxDelegatedPlayerInfo(packet);
+    injectProudxDelegatedSelfPlayerInfo(packet);
     serverConn.getPlayer().getTabList().processUpdate(packet);
     return false;
   }
 
+  private void sanitizeProudxDelegatedPlayerInfo(UpsertPlayerInfoPacket packet) {
+    ConnectedPlayer player = serverConn.getPlayer();
+    if (!player.isProudxSuppressBackendProfileKey()
+        || !packet.getActions().contains(UpsertPlayerInfoPacket.Action.INITIALIZE_CHAT)) {
+      return;
+    }
+
+    UUID delegatedProfileId = player.getProudxBackendGameProfile().getId();
+    for (UpsertPlayerInfoPacket.Entry entry : packet.getEntries()) {
+      if (delegatedProfileId.equals(entry.getProfileId())) {
+        if (entry.getChatSession() != null) {
+          logger.info("[ProudX] stripped delegated chat session for {} ({})",
+              player.getProudxBackendGameProfile().getName(), delegatedProfileId);
+        }
+        entry.setChatSession(null);
+      }
+    }
+  }
+
+  private void injectProudxDelegatedSelfPlayerInfo(UpsertPlayerInfoPacket packet) {
+    ConnectedPlayer player = serverConn.getPlayer();
+    if (!player.isProudxSuppressBackendProfileKey()
+        || !packet.getActions().contains(UpsertPlayerInfoPacket.Action.ADD_PLAYER)) {
+      return;
+    }
+
+    GameProfile delegatedProfile = player.getProudxBackendGameProfile();
+    for (UpsertPlayerInfoPacket.Entry entry : packet.getEntries()) {
+      if (!delegatedProfile.getId().equals(entry.getProfileId())) {
+        continue;
+      }
+
+      List<GameProfile.Property> properties = delegatedProfile.getProperties().isEmpty()
+          && entry.getProfile() != null
+          ? entry.getProfile().getProperties()
+          : delegatedProfile.getProperties();
+      GameProfile selfVisibleProfile = new GameProfile(
+          player.getUniqueId(),
+          delegatedProfile.getName(),
+          properties
+      );
+
+      UpsertPlayerInfoPacket.Entry selfEntry = new UpsertPlayerInfoPacket.Entry(player.getUniqueId());
+      selfEntry.setProfile(selfVisibleProfile);
+      selfEntry.setListed(false);
+      selfEntry.setLatency(entry.getLatency());
+      selfEntry.setGameMode(entry.getGameMode());
+      selfEntry.setDisplayName(entry.getDisplayName());
+      selfEntry.setListOrder(entry.getListOrder());
+      selfEntry.setShowHat(entry.isShowHat());
+
+      EnumSet<UpsertPlayerInfoPacket.Action> actions = EnumSet.of(
+          UpsertPlayerInfoPacket.Action.ADD_PLAYER,
+          UpsertPlayerInfoPacket.Action.UPDATE_LISTED,
+          UpsertPlayerInfoPacket.Action.UPDATE_LATENCY
+      );
+      if (packet.getActions().contains(UpsertPlayerInfoPacket.Action.UPDATE_GAME_MODE)) {
+        actions.add(UpsertPlayerInfoPacket.Action.UPDATE_GAME_MODE);
+      }
+      if (packet.getActions().contains(UpsertPlayerInfoPacket.Action.UPDATE_DISPLAY_NAME)) {
+        actions.add(UpsertPlayerInfoPacket.Action.UPDATE_DISPLAY_NAME);
+      }
+      if (packet.getActions().contains(UpsertPlayerInfoPacket.Action.UPDATE_LIST_ORDER)) {
+        actions.add(UpsertPlayerInfoPacket.Action.UPDATE_LIST_ORDER);
+      }
+      if (packet.getActions().contains(UpsertPlayerInfoPacket.Action.UPDATE_HAT)) {
+        actions.add(UpsertPlayerInfoPacket.Action.UPDATE_HAT);
+      }
+
+      playerConnection.write(new RemovePlayerInfoPacket(List.of(player.getUniqueId())));
+      playerConnection.write(new UpsertPlayerInfoPacket(actions, List.of(selfEntry)));
+      logger.info(
+          "[ProudX] injected delegated self player info: proxyPlayer={} selfUuid={} "
+              + "visibleName={} visibleUuid={} properties={}",
+          player.getUsername(),
+          player.getUniqueId(),
+          delegatedProfile.getName(),
+          delegatedProfile.getId(),
+          properties.size());
+      return;
+    }
+  }
+
   @Override
   public boolean handle(RemovePlayerInfoPacket packet) {
+    sanitizeProudxDelegatedSelfPlayerInfoRemove(packet);
     serverConn.getPlayer().getTabList().processRemove(packet);
     return false;
+  }
+
+  private void sanitizeProudxDelegatedSelfPlayerInfoRemove(RemovePlayerInfoPacket packet) {
+    ConnectedPlayer player = serverConn.getPlayer();
+    if (!player.isProudxSuppressBackendProfileKey()) {
+      return;
+    }
+
+    UUID delegatedProfileId = player.getProudxBackendGameProfile().getId();
+    if (!packet.getProfilesToRemove().contains(delegatedProfileId)) {
+      return;
+    }
+
+    List<UUID> profilesToRemove = new ArrayList<>(packet.getProfilesToRemove());
+    if (!profilesToRemove.contains(player.getUniqueId())) {
+      profilesToRemove.add(player.getUniqueId());
+      packet.setProfilesToRemove(profilesToRemove);
+    }
   }
 
   @Override

@@ -25,10 +25,12 @@ import com.google.common.base.Preconditions;
 import com.velocitypowered.api.network.HandshakeIntent;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.ServerConnection;
+import com.velocitypowered.api.proxy.crypto.IdentifiedKey;
 import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.api.proxy.messages.PluginMessageEncoder;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
+import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.config.PlayerInfoForwarding;
 import com.velocitypowered.proxy.connection.ConnectionTypes;
@@ -53,6 +55,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jetbrains.annotations.NotNull;
@@ -61,6 +65,8 @@ import org.jetbrains.annotations.NotNull;
  * Handles a connection from the proxy to some backend server.
  */
 public class VelocityServerConnection implements MinecraftConnectionAssociation, ServerConnection {
+
+  private static final Logger logger = LogManager.getLogger(VelocityServerConnection.class);
 
   private final VelocityRegisteredServer registeredServer;
   private final @Nullable VelocityRegisteredServer previousServer;
@@ -193,14 +199,39 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
 
     mc.setProtocolVersion(protocolVersion);
     mc.setActiveSessionHandler(StateRegistry.LOGIN);
-    if (proxyPlayer.getIdentifiedKey() == null
+    GameProfile backendProfile = proxyPlayer.getProudxBackendGameProfile();
+    IdentifiedKey backendIdentifiedKey = backendIdentifiedKey(forwardingMode);
+    if (forwardingMode == PlayerInfoForwarding.PROUDX
+        && proxyPlayer.isProudxSuppressBackendProfileKey()) {
+      logger.info(
+          "[ProudX] delegated backend login: proxyPlayer={} backendName={} backendUuid={} "
+              + "properties={} keyForwarded={} loginName={} holderUuid={}",
+          proxyPlayer.getUsername(),
+          backendProfile.getName(),
+          backendProfile.getId(),
+          backendProfile.getProperties().size(),
+          backendIdentifiedKey != null,
+          backendProfile.getName(),
+          backendProfile.getId());
+      mc.delayedWrite(new ServerLoginPacket(backendProfile.getName(), backendProfile.getId()));
+      mc.flush();
+      return;
+    }
+    if (backendIdentifiedKey == null
         && proxyPlayer.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_19_3)) {
-      mc.delayedWrite(new ServerLoginPacket(proxyPlayer.getUsername(), proxyPlayer.getUniqueId()));
+      mc.delayedWrite(new ServerLoginPacket(backendProfile.getName(), backendProfile.getId()));
     } else {
-      mc.delayedWrite(new ServerLoginPacket(proxyPlayer.getUsername(),
-              proxyPlayer.getIdentifiedKey()));
+      mc.delayedWrite(new ServerLoginPacket(backendProfile.getName(), backendIdentifiedKey));
     }
     mc.flush();
+  }
+
+  private @Nullable IdentifiedKey backendIdentifiedKey(PlayerInfoForwarding forwardingMode) {
+    if (forwardingMode == PlayerInfoForwarding.PROUDX
+        && proxyPlayer.isProudxSuppressBackendProfileKey()) {
+      return null;
+    }
+    return proxyPlayer.getIdentifiedKey();
   }
 
   public @Nullable MinecraftConnection getConnection() {

@@ -30,6 +30,7 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.plugin.virtual.VelocityVirtualPlugin;
 import java.util.Objects;
 import java.util.Optional;
@@ -65,7 +66,7 @@ public class SendCommand {
               ? context.getArgument(PLAYER_ARG, String.class)
               : "";
           for (final Player player : server.getAllPlayers()) {
-            final String playerName = player.getUsername();
+            final String playerName = proxyVisibleName(player);
             if (playerName.regionMatches(true, 0, argument, 0, argument.length())) {
               builder.suggest(playerName);
             }
@@ -165,5 +166,12 @@ public class SendCommand {
     // The player at this point must be present
     maybePlayer.orElseThrow().createConnectionRequest(targetServer).fireAndForget();
     return Command.SINGLE_SUCCESS;
+  }
+
+  private static String proxyVisibleName(Player player) {
+    if (player instanceof ConnectedPlayer connectedPlayer) {
+      return connectedPlayer.getProudxEffectiveUsername();
+    }
+    return player.getUsername();
   }
 }

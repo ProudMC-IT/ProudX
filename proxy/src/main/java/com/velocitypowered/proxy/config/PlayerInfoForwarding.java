@@ -24,5 +24,6 @@ public enum PlayerInfoForwarding {
   NONE,
   LEGACY,
   BUNGEEGUARD,
-  MODERN
+  MODERN,
+  PROUDX
 }

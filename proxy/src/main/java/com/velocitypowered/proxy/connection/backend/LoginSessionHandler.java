@@ -21,6 +21,7 @@ import com.velocitypowered.api.event.player.CookieRequestEvent;
 import com.velocitypowered.api.event.player.ServerLoginPluginMessageEvent;
 import com.velocitypowered.api.event.player.configuration.PlayerEnteredConfigurationEvent;
 import com.velocitypowered.api.network.ProtocolVersion;
+import com.velocitypowered.api.proxy.crypto.IdentifiedKey;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.config.PlayerInfoForwarding;
@@ -83,7 +84,8 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
   public boolean handle(LoginPluginMessagePacket packet) {
     MinecraftConnection mc = serverConn.ensureConnected();
     VelocityConfiguration configuration = server.getConfiguration();
-    if (configuration.getPlayerInfoForwardingMode() == PlayerInfoForwarding.MODERN
+    PlayerInfoForwarding forwardingMode = configuration.getPlayerInfoForwardingMode();
+    if (isModernForwarding(forwardingMode)
         && packet.getChannel().equals(PlayerDataForwarding.CHANNEL)) {
 
       int requestedForwardingVersion = PlayerDataForwarding.MODERN_DEFAULT;
@@ -92,13 +94,29 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
         requestedForwardingVersion = packet.content().readByte();
       }
       ConnectedPlayer player = serverConn.getPlayer();
+      int effectiveForwardingVersion = forwardingMode == PlayerInfoForwarding.PROUDX
+          && player.isProudxSuppressBackendProfileKey()
+          ? PlayerDataForwarding.MODERN_DEFAULT
+          : requestedForwardingVersion;
       ByteBuf forwardingData = PlayerDataForwarding.createForwardingData(
           configuration.getForwardingSecret(),
           serverConn.getPlayerRemoteAddressAsString(),
           player.getProtocolVersion(),
-          player.getGameProfile(),
-          player.getIdentifiedKey(),
-          requestedForwardingVersion);
+          player.getProudxBackendGameProfile(),
+          backendIdentifiedKey(forwardingMode, player),
+          effectiveForwardingVersion);
+      if (forwardingMode == PlayerInfoForwarding.PROUDX
+          && player.isProudxSuppressBackendProfileKey()) {
+        logger.info(
+            "[ProudX] delegated modern forwarding: proxyPlayer={} backendName={} "
+                + "backendUuid={} requestedVersion={} effectiveVersion={} keyForwarded={}",
+            player.getUsername(),
+            player.getProudxBackendGameProfile().getName(),
+            player.getProudxBackendGameProfile().getId(),
+            requestedForwardingVersion,
+            effectiveForwardingVersion,
+            backendIdentifiedKey(forwardingMode, player) != null);
+      }
 
       LoginPluginResponsePacket response = new LoginPluginResponsePacket(
               packet.getId(), true, forwardingData);
@@ -143,7 +161,7 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(ServerLoginSuccessPacket packet) {
-    if (server.getConfiguration().getPlayerInfoForwardingMode() == PlayerInfoForwarding.MODERN && !informationForwarded) {
+    if (isModernForwarding(server.getConfiguration().getPlayerInfoForwardingMode()) && !informationForwarded) {
       resultFuture.complete(ConnectionRequestResults.forDisconnect(MODERN_IP_FORWARDING_FAILURE, serverConn.getServer()));
       serverConn.disconnect();
       return true;
@@ -215,5 +233,17 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
           new QuietRuntimeException("The connection to the remote server was unexpectedly closed.")
       );
     }
+  }
+
+  private static boolean isModernForwarding(PlayerInfoForwarding forwardingMode) {
+    return forwardingMode == PlayerInfoForwarding.MODERN || forwardingMode == PlayerInfoForwarding.PROUDX;
+  }
+
+  private static IdentifiedKey backendIdentifiedKey(PlayerInfoForwarding forwardingMode, ConnectedPlayer player) {
+    if (forwardingMode == PlayerInfoForwarding.PROUDX
+        && player.isProudxSuppressBackendProfileKey()) {
+      return null;
+    }
+    return player.getIdentifiedKey();
   }
 }

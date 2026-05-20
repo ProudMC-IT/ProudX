@@ -139,8 +139,8 @@ public class VelocityTabList implements InternalTabList {
           actions.add(UpsertPlayerInfoPacket.Action.UPDATE_HAT);
           playerInfoEntry.setShowHat(entry.isShowHat());
         }
-        if (!Objects.equals(previousEntry.getChatSession(), entry.getChatSession())) {
-          ChatSession from = entry.getChatSession();
+        if (!Objects.equals(previousEntry.getChatSession(), visibleChatSession(entry))) {
+          ChatSession from = visibleChatSession(entry);
           if (from != null) {
             actions.add(UpsertPlayerInfoPacket.Action.INITIALIZE_CHAT);
             playerInfoEntry.setChatSession(
@@ -161,9 +161,9 @@ public class VelocityTabList implements InternalTabList {
                           entry.getDisplayNameComponent().get())
           );
         }
-        if (entry.getChatSession() != null) {
+        if (visibleChatSession(entry) != null) {
           actions.add(UpsertPlayerInfoPacket.Action.INITIALIZE_CHAT);
-          ChatSession from = entry.getChatSession();
+          ChatSession from = visibleChatSession(entry);
           playerInfoEntry.setChatSession(
                   new RemoteChatSession(from.getSessionId(), from.getIdentifiedKey()));
         }
@@ -248,7 +248,29 @@ public class VelocityTabList implements InternalTabList {
 
   protected void emitActionRaw(UpsertPlayerInfoPacket.Action action,
                                UpsertPlayerInfoPacket.Entry entry) {
+    sanitizeProudxDelegatedEntry(action, entry);
     this.connection.write(new UpsertPlayerInfoPacket(EnumSet.of(action), List.of(entry)));
+  }
+
+  private @Nullable ChatSession visibleChatSession(VelocityTabListEntry entry) {
+    ChatSession session = entry.getChatSession();
+    if (session == null || !player.isProudxSuppressBackendProfileKey()) {
+      return session;
+    }
+    UUID delegatedProfileId = player.getProudxBackendGameProfile().getId();
+    return Objects.equals(delegatedProfileId, entry.getProfile().getId()) ? null : session;
+  }
+
+  private void sanitizeProudxDelegatedEntry(UpsertPlayerInfoPacket.Action action,
+                                            UpsertPlayerInfoPacket.Entry entry) {
+    if (action != UpsertPlayerInfoPacket.Action.INITIALIZE_CHAT
+        || !player.isProudxSuppressBackendProfileKey()) {
+      return;
+    }
+    UUID delegatedProfileId = player.getProudxBackendGameProfile().getId();
+    if (Objects.equals(delegatedProfileId, entry.getProfileId())) {
+      entry.setChatSession(null);
+    }
   }
 
   private void processUpsert(EnumSet<UpsertPlayerInfoPacket.Action> actions,

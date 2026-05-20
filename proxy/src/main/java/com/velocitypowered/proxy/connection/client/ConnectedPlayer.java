@@ -59,6 +59,7 @@ import com.velocitypowered.api.util.ModInfo;
 import com.velocitypowered.api.util.ServerLink;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.adventure.VelocityBossBarImplementation;
+import com.velocitypowered.proxy.config.PlayerInfoForwarding;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftConnectionAssociation;
 import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
@@ -200,6 +201,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private @Nullable String clientBrand;
   private @Nullable Locale effectiveLocale;
   private final @Nullable IdentifiedKey playerKey;
+  private volatile boolean proudxSuppressBackendProfileKey;
+  private volatile @Nullable GameProfile proudxBackendProfileOverride;
   private @Nullable ClientSettingsPacket clientSettingsPacket;
   private volatile ChatQueue chatQueue;
   private final ChatBuilderFactory chatBuilderFactory;
@@ -1000,6 +1003,9 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
 
   @Override
   public Tristate getPermissionValue(String permission) {
+    if (isProudxSuppressBackendProfileKey()) {
+      return Tristate.TRUE;
+    }
     return permissionFunction.getPermissionValue(permission);
   }
 
@@ -1423,6 +1429,88 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   @Override
   public @Nullable IdentifiedKey getIdentifiedKey() {
     return playerKey;
+  }
+
+  /**
+   * Allows ProudAuth to suppress forwarding the Mojang profile key only while a validated
+   * delegated-access session is being projected to backend servers.
+   *
+   * @param suppressBackendProfileKey whether backend profile-key forwarding should be suppressed
+   */
+  public void setProudxSuppressBackendProfileKey(boolean suppressBackendProfileKey) {
+    this.proudxSuppressBackendProfileKey = suppressBackendProfileKey;
+    if (!suppressBackendProfileKey) {
+      this.proudxBackendProfileOverride = null;
+    }
+  }
+
+  /**
+   * Allows ProudAuth to project a validated delegated profile to backend login/forwarding data.
+   *
+   * @param suppressBackendProfileKey whether backend profile-key forwarding should be suppressed
+   * @param profileUuid the backend account UUID
+   * @param profileName the backend account name
+   */
+  public void setProudxDelegatedBackendProfile(boolean suppressBackendProfileKey,
+                                               UUID profileUuid,
+                                               String profileName) {
+    setProudxDelegatedBackendProfile(suppressBackendProfileKey, profileUuid, profileName, List.of());
+  }
+
+  /**
+   * Allows ProudAuth to project a validated delegated profile to backend login/forwarding data.
+   *
+   * @param suppressBackendProfileKey whether backend profile-key forwarding should be suppressed
+   * @param profileUuid the backend account UUID
+   * @param profileName the backend account name
+   * @param properties signed Mojang profile properties for the delegated backend account
+   */
+  public void setProudxDelegatedBackendProfile(boolean suppressBackendProfileKey,
+                                               UUID profileUuid,
+                                               String profileName,
+                                               List<GameProfile.Property> properties) {
+    this.proudxSuppressBackendProfileKey = suppressBackendProfileKey;
+    this.proudxBackendProfileOverride = suppressBackendProfileKey
+        ? new GameProfile(profileUuid, profileName, properties == null ? List.of() : properties)
+        : null;
+  }
+
+  /**
+   * Returns whether ProudAuth requested backend profile-key suppression for this connection.
+   *
+   * @return {@code true} when backend profile-key forwarding should be suppressed
+   */
+  public boolean isProudxSuppressBackendProfileKey() {
+    return proudxSuppressBackendProfileKey;
+  }
+
+  /**
+   * Returns whether the current proxy configuration can apply ProudX backend profile-key
+   * suppression.
+   *
+   * @return {@code true} only when the proxy is running the {@code proudx} forwarding mode
+   */
+  public boolean isProudxBackendProfileKeySuppressionSupported() {
+    return server.getConfiguration().getPlayerInfoForwardingMode() == PlayerInfoForwarding.PROUDX;
+  }
+
+  /**
+   * Returns the profile that should be sent to backend login/forwarding for this connection.
+   *
+   * @return the delegated backend profile when active, otherwise the regular proxy profile
+   */
+  public GameProfile getProudxBackendGameProfile() {
+    GameProfile override = proudxBackendProfileOverride;
+    return override == null ? profile : override;
+  }
+
+  /**
+   * Returns the name that proxy-side player lookups and suggestions should expose.
+   *
+   * @return the delegated backend name when active, otherwise the regular proxy username
+   */
+  public String getProudxEffectiveUsername() {
+    return getProudxBackendGameProfile().getName();
   }
 
   @Override

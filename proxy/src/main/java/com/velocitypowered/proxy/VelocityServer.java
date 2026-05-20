@@ -748,7 +748,14 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   @Override
   public Optional<Player> getPlayer(String username) {
     Preconditions.checkNotNull(username, "username");
-    return Optional.ofNullable(connectionsByName.get(username.toLowerCase(Locale.US)));
+    ConnectedPlayer player = connectionsByName.get(username.toLowerCase(Locale.US));
+    if (player != null) {
+      return Optional.of(player);
+    }
+    return connectionsByUuid.values().stream()
+        .filter(p -> p.getProudxEffectiveUsername().equalsIgnoreCase(username))
+        .findFirst()
+        .map(p -> (Player) p);
   }
 
   @Override
@@ -761,9 +768,16 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   public Collection<Player> matchPlayer(String partialName) {
     Objects.requireNonNull(partialName);
 
-    return getAllPlayers().stream().filter(p -> p.getUsername()
+    return getAllPlayers().stream().filter(p -> playerLookupName(p)
             .regionMatches(true, 0, partialName, 0, partialName.length()))
         .collect(Collectors.toList());
+  }
+
+  private String playerLookupName(Player player) {
+    if (player instanceof ConnectedPlayer connectedPlayer) {
+      return connectedPlayer.getProudxEffectiveUsername();
+    }
+    return player.getUsername();
   }
 
   @Override
