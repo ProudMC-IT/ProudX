@@ -124,7 +124,7 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
                         + "Velocity. Falling back to the default permission function.",
                     event.getProvider().getClass().getName(), player.getUsername());
               } else {
-                player.setPermissionFunction(function);
+                player.setPermissionFunction(function, event.getProvider());
               }
               startLoginCompletion(player);
             }

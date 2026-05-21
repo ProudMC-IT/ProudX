@@ -195,6 +195,27 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     return this.configuration;
   }
 
+  /**
+   * Runtime marker used by integrations that need ProudX-specific forwarding behavior.
+   *
+   * @return always {@code true} on ProudX builds
+   */
+  public boolean isProudX() {
+    return true;
+  }
+
+  /**
+   * Exposes the effective player-info-forwarding mode for startup validation.
+   *
+   * @return the current forwarding mode name, or {@code UNKNOWN} before configuration load
+   */
+  public String getProudXPlayerInfoForwardingMode() {
+    VelocityConfiguration currentConfiguration = this.configuration;
+    return currentConfiguration == null
+        ? "UNKNOWN"
+        : currentConfiguration.getPlayerInfoForwardingMode().name();
+  }
+
   @Override
   public ProxyVersion getVersion() {
     Package pkg = VelocityServer.class.getPackage();

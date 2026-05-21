@@ -106,6 +106,10 @@ import com.velocitypowered.proxy.util.TranslatableMapper;
 import com.velocitypowered.proxy.util.collect.CappedSet;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.Collections;
@@ -179,6 +183,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private final HandshakeIntent handshakeIntent;
   private GameProfile profile;
   private PermissionFunction permissionFunction;
+  private PermissionFunction proudxBasePermissionFunction;
+  private PermissionProvider permissionProvider = DEFAULT_PERMISSIONS;
   private int tryIndex = 0;
   private long ping = -1;
   private final boolean onlineMode;
@@ -218,6 +224,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     this.rawVirtualHost = rawVirtualHost;
     this.handshakeIntent = handshakeIntent;
     this.permissionFunction = PermissionFunction.ALWAYS_UNDEFINED;
+    this.proudxBasePermissionFunction = PermissionFunction.ALWAYS_UNDEFINED;
     this.connectionPhase = connection.getType().getInitialClientPhase();
     this.onlineMode = onlineMode;
     this.clientsideChannels = CappedSet.create(MAX_CLIENTSIDE_PLUGIN_CHANNELS);
@@ -395,6 +402,17 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   }
 
   void setPermissionFunction(PermissionFunction permissionFunction) {
+    setPermissionFunction(permissionFunction, DEFAULT_PERMISSIONS);
+  }
+
+  void setPermissionFunction(PermissionFunction permissionFunction, PermissionProvider permissionProvider) {
+    this.proudxBasePermissionFunction = permissionFunction;
+    this.permissionProvider = permissionProvider == null ? DEFAULT_PERMISSIONS : permissionProvider;
+    if (isProudxSuppressBackendProfileKey()) {
+      GameProfile delegatedProfile = getProudxBackendGameProfile();
+      this.permissionFunction = createProudxDelegatedPermissionFunction(delegatedProfile);
+      return;
+    }
     this.permissionFunction = permissionFunction;
   }
 
@@ -1003,9 +1021,6 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
 
   @Override
   public Tristate getPermissionValue(String permission) {
-    if (isProudxSuppressBackendProfileKey()) {
-      return Tristate.TRUE;
-    }
     return permissionFunction.getPermissionValue(permission);
   }
 
@@ -1441,6 +1456,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     this.proudxSuppressBackendProfileKey = suppressBackendProfileKey;
     if (!suppressBackendProfileKey) {
       this.proudxBackendProfileOverride = null;
+      this.permissionFunction = proudxBasePermissionFunction;
     }
   }
 
@@ -1469,10 +1485,50 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
                                                UUID profileUuid,
                                                String profileName,
                                                List<GameProfile.Property> properties) {
-    this.proudxSuppressBackendProfileKey = suppressBackendProfileKey;
-    this.proudxBackendProfileOverride = suppressBackendProfileKey
-        ? new GameProfile(profileUuid, profileName, properties == null ? List.of() : properties)
-        : null;
+    if (!suppressBackendProfileKey) {
+      this.proudxSuppressBackendProfileKey = false;
+      this.proudxBackendProfileOverride = null;
+      this.permissionFunction = proudxBasePermissionFunction;
+      return;
+    }
+
+    GameProfile delegatedProfile = new GameProfile(profileUuid, profileName,
+        properties == null ? List.of() : properties);
+    this.proudxBackendProfileOverride = delegatedProfile;
+    this.permissionFunction = createProudxDelegatedPermissionFunction(delegatedProfile);
+    this.proudxSuppressBackendProfileKey = true;
+  }
+
+  private PermissionFunction createProudxDelegatedPermissionFunction(GameProfile delegatedProfile) {
+    PermissionFunction providerFunction = PermissionFunction.ALWAYS_UNDEFINED;
+    if (!permissionProvider.getClass().getName().toLowerCase(Locale.ROOT).contains("luckperms")) {
+      try {
+        Player delegatedSubject = (Player) Proxy.newProxyInstance(
+            Player.class.getClassLoader(),
+            new Class<?>[]{Player.class},
+            new ProudxDelegatedPermissionSubject(this, delegatedProfile));
+        PermissionFunction delegatedFunction = permissionProvider.createFunction(delegatedSubject);
+        if (delegatedFunction != null) {
+          providerFunction = delegatedFunction;
+        } else {
+          logger.warn("Permission provider {} returned null for delegated ProudX profile {}.",
+              permissionProvider.getClass().getName(), delegatedProfile.getName());
+        }
+      } catch (RuntimeException exception) {
+        logger.warn("Could not create delegated ProudX permission function for profile {}.",
+            delegatedProfile.getName(), exception);
+      }
+    }
+
+    PermissionFunction fallbackFunction = providerFunction;
+    PermissionFunction luckPermsFunction = new ProudxLuckPermsPermissionFunction(server, delegatedProfile);
+    return permission -> {
+      Tristate luckPermsValue = luckPermsFunction.getPermissionValue(permission);
+      if (luckPermsValue != Tristate.UNDEFINED) {
+        return luckPermsValue;
+      }
+      return fallbackFunction.getPermissionValue(permission);
+    };
   }
 
   /**
@@ -1511,6 +1567,172 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
    */
   public String getProudxEffectiveUsername() {
     return getProudxBackendGameProfile().getName();
+  }
+
+  private static final class ProudxDelegatedPermissionSubject implements InvocationHandler {
+
+    private final ConnectedPlayer player;
+    private final GameProfile delegatedProfile;
+
+    private ProudxDelegatedPermissionSubject(ConnectedPlayer player, GameProfile delegatedProfile) {
+      this.player = player;
+      this.delegatedProfile = delegatedProfile;
+    }
+
+    @Override
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+      if (method.getDeclaringClass() == Object.class) {
+        return switch (method.getName()) {
+          case "toString" -> "ProudXDelegatedPermissionSubject{"
+              + delegatedProfile.getName() + "/" + delegatedProfile.getId() + "}";
+          case "hashCode" -> System.identityHashCode(proxy);
+          case "equals" -> proxy == args[0];
+          default -> method.invoke(this, args);
+        };
+      }
+
+      if (method.getParameterCount() == 0) {
+        switch (method.getName()) {
+          case "getUsername":
+            return delegatedProfile.getName();
+          case "getUniqueId":
+            return delegatedProfile.getId();
+          case "getGameProfile":
+            return delegatedProfile;
+          case "getGameProfileProperties":
+            return delegatedProfile.getProperties();
+          case "identity":
+            return Identity.identity(delegatedProfile.getId());
+          default:
+            break;
+        }
+      }
+
+      if ("getPermissionValue".equals(method.getName()) && method.getParameterCount() == 1
+          && args != null && args.length == 1 && args[0] instanceof String permission) {
+        return player.proudxBasePermissionFunction.getPermissionValue(permission);
+      }
+
+      if ("hasPermission".equals(method.getName()) && method.getParameterCount() == 1
+          && args != null && args.length == 1 && args[0] instanceof String permission) {
+        return player.proudxBasePermissionFunction.getPermissionValue(permission).asBoolean();
+      }
+
+      try {
+        return method.invoke(player, args);
+      } catch (InvocationTargetException exception) {
+        throw exception.getCause();
+      }
+    }
+  }
+
+  private static final class ProudxLuckPermsPermissionFunction implements PermissionFunction {
+
+    private final VelocityServer server;
+    private final GameProfile delegatedProfile;
+    private volatile @Nullable CompletableFuture<Object> userFuture;
+    private volatile boolean unavailable;
+
+    private ProudxLuckPermsPermissionFunction(VelocityServer server, GameProfile delegatedProfile) {
+      this.server = server;
+      this.delegatedProfile = delegatedProfile;
+    }
+
+    @Override
+    public Tristate getPermissionValue(String permission) {
+      if (unavailable) {
+        return Tristate.UNDEFINED;
+      }
+      try {
+        Object user = loadUser();
+        if (user == null) {
+          return Tristate.UNDEFINED;
+        }
+        ClassLoader luckPermsClassLoader = luckPermsClassLoader();
+        if (luckPermsClassLoader == null) {
+          return Tristate.UNDEFINED;
+        }
+        Class<?> queryOptionsClass = Class.forName("net.luckperms.api.query.QueryOptions", true,
+            luckPermsClassLoader);
+        Object queryOptions = queryOptionsClass
+            .getMethod("defaultContextualOptions")
+            .invoke(null);
+        Object cachedData = user.getClass().getMethod("getCachedData").invoke(user);
+        Method getPermissionData = cachedData.getClass()
+            .getMethod("getPermissionData", queryOptionsClass);
+        Object permissionData = getPermissionData.invoke(cachedData, queryOptions);
+        Object tristate = permissionData.getClass()
+            .getMethod("checkPermission", String.class)
+            .invoke(permissionData, permission);
+        String tristateName = tristate instanceof Enum<?> enumValue
+            ? enumValue.name()
+            : String.valueOf(tristate);
+        return switch (tristateName) {
+          case "TRUE" -> Tristate.TRUE;
+          case "FALSE" -> Tristate.FALSE;
+          default -> Tristate.UNDEFINED;
+        };
+      } catch (ReflectiveOperationException | RuntimeException exception) {
+        unavailable = true;
+        logger.warn("Could not query LuckPerms permissions for delegated ProudX profile {}. "
+                + "Falling back to Velocity permission provider.",
+            delegatedProfile.getName(), exception);
+        return Tristate.UNDEFINED;
+      }
+    }
+
+    private @Nullable Object loadUser() {
+      CompletableFuture<Object> future = userFuture;
+      if (future == null) {
+        future = createUserFuture();
+        userFuture = future;
+      }
+      try {
+        return future.get(2, TimeUnit.SECONDS);
+      } catch (Exception exception) {
+        logger.warn("Timed out loading LuckPerms user data for delegated ProudX profile {}. "
+                + "Falling back to Velocity permission provider.",
+            delegatedProfile.getName(), exception);
+        return null;
+      }
+    }
+
+    @SuppressWarnings("unchecked")
+    private CompletableFuture<Object> createUserFuture() {
+      try {
+        ClassLoader luckPermsClassLoader = luckPermsClassLoader();
+        if (luckPermsClassLoader == null) {
+          unavailable = true;
+          return CompletableFuture.completedFuture(null);
+        }
+        Object luckPerms = Class.forName("net.luckperms.api.LuckPermsProvider", true,
+                luckPermsClassLoader)
+            .getMethod("get")
+            .invoke(null);
+        Object userManager = luckPerms.getClass().getMethod("getUserManager").invoke(luckPerms);
+        try {
+          return (CompletableFuture<Object>) userManager.getClass()
+              .getMethod("loadUser", UUID.class, String.class)
+              .invoke(userManager, delegatedProfile.getId(), delegatedProfile.getName());
+        } catch (NoSuchMethodException ignored) {
+          return (CompletableFuture<Object>) userManager.getClass()
+              .getMethod("loadUser", UUID.class)
+              .invoke(userManager, delegatedProfile.getId());
+        }
+      } catch (ReflectiveOperationException | RuntimeException exception) {
+        unavailable = true;
+        logger.warn("LuckPerms API is not available for delegated ProudX permissions. "
+                + "Falling back to Velocity permission provider.",
+            exception);
+        return CompletableFuture.completedFuture(null);
+      }
+    }
+
+    private @Nullable ClassLoader luckPermsClassLoader() {
+      return server.getPluginManager().getPlugin("luckperms")
+          .flatMap(plugin -> plugin.getInstance().map(instance -> instance.getClass().getClassLoader()))
+          .orElse(null);
+    }
   }
 
   @Override
@@ -1621,8 +1843,16 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
         }
 
         switch (status.getStatus()) {
-          case ALREADY_CONNECTED -> sendMessage(ConnectionMessages.ALREADY_CONNECTED);
-          case CONNECTION_IN_PROGRESS -> sendMessage(ConnectionMessages.IN_PROGRESS);
+          case ALREADY_CONNECTED -> {
+            if (!shouldSuppressProudxDelegatedConnectionNotice()) {
+              sendMessage(ConnectionMessages.ALREADY_CONNECTED);
+            }
+          }
+          case CONNECTION_IN_PROGRESS -> {
+            if (!shouldSuppressProudxDelegatedConnectionNotice()) {
+              sendMessage(ConnectionMessages.IN_PROGRESS);
+            }
+          }
           case CONNECTION_CANCELLED -> {
             // Ignored; the plugin probably already handled this.
           }
@@ -1642,6 +1872,10 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     @Override
     public void fireAndForget() {
       connectWithIndication();
+    }
+
+    private boolean shouldSuppressProudxDelegatedConnectionNotice() {
+      return ConnectedPlayer.this.isProudxSuppressBackendProfileKey();
     }
   }
 }
