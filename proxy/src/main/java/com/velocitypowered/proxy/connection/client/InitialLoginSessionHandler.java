@@ -31,7 +31,7 @@ import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.crypto.IdentifiedKey;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.VelocityServer;
-import com.velocitypowered.proxy.config.VelocityConfiguration.ProudXAuthMessages;
+import com.velocitypowered.proxy.config.VelocityConfiguration.ProudxAuthMessages;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.crypto.IdentifiedKeyImpl;
@@ -44,8 +44,8 @@ import com.velocitypowered.proxy.protocol.packet.ServerLoginPacket;
 import com.velocitypowered.proxy.util.VelocityProperties;
 import io.netty.buffer.ByteBuf;
 import java.net.InetSocketAddress;
-import java.net.URI;
 import java.net.SocketTimeoutException;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -394,8 +394,8 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     return request;
   }
 
-  private ProudXAuthMessages authMessages() {
-    return server.getConfiguration().getProudXAuthMessages();
+  private ProudxAuthMessages authMessages() {
+    return server.getConfiguration().getProudxAuthMessages();
   }
 
   private boolean isTimeout(Throwable throwable) {

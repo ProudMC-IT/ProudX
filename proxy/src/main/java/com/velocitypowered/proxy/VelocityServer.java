@@ -211,7 +211,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
    *
    * @return the current forwarding mode name, or {@code UNKNOWN} before configuration load
    */
-  public String getProudXPlayerInfoForwardingMode() {
+  public String getProudxPlayerInfoForwardingMode() {
     VelocityConfiguration currentConfiguration = this.configuration;
     return currentConfiguration == null
         ? "UNKNOWN"

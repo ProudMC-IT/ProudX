@@ -154,7 +154,7 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
           // Failsafe
           if (!unlinkedKey.internalAddHolder(player.getUniqueId())) {
             if (onlineMode) {
-              inbound.disconnect(server.getConfiguration().getProudXAuthMessages()
+              inbound.disconnect(server.getConfiguration().getProudxAuthMessages()
                   .profileKeyMismatch(player.getUsername()));
               return;
             } else {

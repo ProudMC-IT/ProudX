@@ -65,8 +65,8 @@ import com.velocitypowered.proxy.protocol.packet.chat.keyed.KeyedPlayerCommandPa
 import com.velocitypowered.proxy.protocol.packet.chat.legacy.LegacyChatHandler;
 import com.velocitypowered.proxy.protocol.packet.chat.legacy.LegacyChatPacket;
 import com.velocitypowered.proxy.protocol.packet.chat.legacy.LegacyCommandHandler;
-import com.velocitypowered.proxy.protocol.packet.chat.session.SessionChatSessionUpdatePacket;
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionChatHandler;
+import com.velocitypowered.proxy.protocol.packet.chat.session.SessionChatSessionUpdatePacket;
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionCommandHandler;
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionPlayerChatPacket;
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionPlayerCommandPacket;

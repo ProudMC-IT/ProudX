@@ -98,7 +98,7 @@ public class VelocityConfiguration implements ProxyConfig {
   private boolean forceKeyAuthentication = true; // Added in 1.19
   @Expose
   private PacketLimiterConfig packetLimiterConfig = PacketLimiterConfig.DEFAULT;
-  private final ProudXAuthMessages proudXAuthMessages;
+  private final ProudxAuthMessages proudxAuthMessages;
 
   private VelocityConfiguration(Servers servers, ForcedHosts forcedHosts, Advanced advanced,
       Query query, Metrics metrics) {
@@ -107,7 +107,7 @@ public class VelocityConfiguration implements ProxyConfig {
     this.advanced = advanced;
     this.query = query;
     this.metrics = metrics;
-    this.proudXAuthMessages = new ProudXAuthMessages(null);
+    this.proudxAuthMessages = new ProudxAuthMessages(null);
   }
 
   private VelocityConfiguration(String bind, String motd, int showMaxPlayers, boolean onlineMode,
@@ -117,7 +117,7 @@ public class VelocityConfiguration implements ProxyConfig {
       boolean samplePlayersInPing, boolean enablePlayerAddressLogging, Servers servers,
       ForcedHosts forcedHosts, Advanced advanced, Query query, Metrics metrics,
       boolean forceKeyAuthentication, PacketLimiterConfig packetLimiterConfig,
-      ProudXAuthMessages proudXAuthMessages) {
+      ProudxAuthMessages proudxAuthMessages) {
     this.bind = bind;
     this.motd = motd;
     this.showMaxPlayers = showMaxPlayers;
@@ -137,7 +137,7 @@ public class VelocityConfiguration implements ProxyConfig {
     this.metrics = metrics;
     this.forceKeyAuthentication = forceKeyAuthentication;
     this.packetLimiterConfig = packetLimiterConfig;
-    this.proudXAuthMessages = proudXAuthMessages;
+    this.proudxAuthMessages = proudxAuthMessages;
   }
 
   /**
@@ -460,8 +460,8 @@ public class VelocityConfiguration implements ProxyConfig {
     return packetLimiterConfig;
   }
 
-  public ProudXAuthMessages getProudXAuthMessages() {
-    return proudXAuthMessages;
+  public ProudxAuthMessages getProudxAuthMessages() {
+    return proudxAuthMessages;
   }
 
   @Override
@@ -482,7 +482,7 @@ public class VelocityConfiguration implements ProxyConfig {
         .add("enablePlayerAddressLogging", enablePlayerAddressLogging)
         .add("forceKeyAuthentication", forceKeyAuthentication)
         .add("packetLimiterConfig", packetLimiterConfig)
-        .add("proudXAuthMessages", proudXAuthMessages)
+        .add("proudxAuthMessages", proudxAuthMessages)
         .toString();
   }
 
@@ -563,10 +563,10 @@ public class VelocityConfiguration implements ProxyConfig {
       final CommentedConfig advancedConfig = config.get("advanced");
       final CommentedConfig queryConfig = config.get("query");
       final CommentedConfig metricsConfig = config.get("metrics");
-      final CommentedConfig proudXConfig = config.get("proudx");
-      final CommentedConfig proudXAuthMessagesConfig = proudXConfig == null
+      final CommentedConfig proudxConfig = config.get("proudx");
+      final CommentedConfig proudxAuthMessagesConfig = proudxConfig == null
           ? null
-          : proudXConfig.get("auth-messages");
+          : proudxConfig.get("auth-messages");
       final PlayerInfoForwarding forwardingMode = config.getEnumOrElse(
               "player-info-forwarding-mode", PlayerInfoForwarding.NONE);
       final PingPassthroughMode pingPassthroughMode = config.getEnumOrElse("ping-passthrough",
@@ -615,7 +615,7 @@ public class VelocityConfiguration implements ProxyConfig {
               new Metrics(metricsConfig),
               forceKeyAuthentication,
               packetLimiterConfig,
-              new ProudXAuthMessages(proudXAuthMessagesConfig)
+              new ProudxAuthMessages(proudxAuthMessagesConfig)
       );
     }
   }
@@ -640,7 +640,10 @@ public class VelocityConfiguration implements ProxyConfig {
     return onlineModeKickExistingPlayers;
   }
 
-  public static final class ProudXAuthMessages {
+  /**
+   * Configurable ProudX authentication messages.
+   */
+  public static final class ProudxAuthMessages {
 
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.builder()
         .character('&')
@@ -679,7 +682,7 @@ public class VelocityConfiguration implements ProxyConfig {
         + "&7Non siamo riusciti a leggere il profilo premium.\n"
         + "&eRiprova tra poco.";
 
-    private ProudXAuthMessages(CommentedConfig config) {
+    private ProudxAuthMessages(CommentedConfig config) {
       if (config != null) {
         this.hasJoinedEmpty = config.getOrElse("has-joined-empty", hasJoinedEmpty);
         this.mojangTimeout = config.getOrElse("mojang-timeout", mojangTimeout);
@@ -743,7 +746,7 @@ public class VelocityConfiguration implements ProxyConfig {
 
     @Override
     public String toString() {
-      return "ProudXAuthMessages{customizable=true}";
+      return "ProudxAuthMessages{customizable=true}";
     }
   }
 
