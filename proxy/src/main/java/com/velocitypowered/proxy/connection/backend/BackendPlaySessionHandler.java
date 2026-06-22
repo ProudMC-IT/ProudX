@@ -462,7 +462,7 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
 
   private void sanitizeProudxDelegatedPlayerInfo(UpsertPlayerInfoPacket packet) {
     ConnectedPlayer player = serverConn.getPlayer();
-    if (!player.isProudxSuppressBackendProfileKey()
+    if (!player.isProudxDelegatedBackendProfileActiveForServer(serverConn.getServerInfo().getName())
         || !packet.getActions().contains(UpsertPlayerInfoPacket.Action.INITIALIZE_CHAT)) {
       return;
     }
@@ -481,7 +481,7 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
 
   private void injectProudxDelegatedSelfPlayerInfo(UpsertPlayerInfoPacket packet) {
     ConnectedPlayer player = serverConn.getPlayer();
-    if (!player.isProudxSuppressBackendProfileKey()
+    if (!player.isProudxDelegatedBackendProfileActiveForServer(serverConn.getServerInfo().getName())
         || !packet.getActions().contains(UpsertPlayerInfoPacket.Action.ADD_PLAYER)) {
       return;
     }
@@ -545,7 +545,7 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
 
   private void sanitizeProudxDelegatedSelfPlayerInfoRemove(RemovePlayerInfoPacket packet) {
     ConnectedPlayer player = serverConn.getPlayer();
-    if (!player.isProudxSuppressBackendProfileKey()) {
+    if (!player.isProudxDelegatedBackendProfileActiveForServer(serverConn.getServerInfo().getName())) {
       return;
     }
 

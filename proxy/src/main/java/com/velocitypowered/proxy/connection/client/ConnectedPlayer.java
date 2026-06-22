@@ -210,6 +210,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private final @Nullable IdentifiedKey playerKey;
   private volatile boolean proudxSuppressBackendProfileKey;
   private volatile @Nullable GameProfile proudxBackendProfileOverride;
+  private volatile String proudxDelegatedBackendRegionId = "";
+  private volatile Set<String> proudxDelegatedBackendAllowedServers = Set.of();
   private @Nullable ClientSettingsPacket clientSettingsPacket;
   private volatile ChatQueue chatQueue;
   private final ChatBuilderFactory chatBuilderFactory;
@@ -409,8 +411,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   void setPermissionFunction(PermissionFunction permissionFunction, PermissionProvider permissionProvider) {
     this.proudxBasePermissionFunction = permissionFunction;
     this.permissionProvider = permissionProvider == null ? DEFAULT_PERMISSIONS : permissionProvider;
-    if (isProudxSuppressBackendProfileKey()) {
-      GameProfile delegatedProfile = getProudxBackendGameProfile();
+    if (isProudxSuppressBackendProfileKey() && proudxBackendProfileOverride != null) {
+      GameProfile delegatedProfile = proudxBackendProfileOverride;
       this.permissionFunction = createProudxDelegatedPermissionFunction(delegatedProfile);
       return;
     }
@@ -1458,6 +1460,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     this.proudxSuppressBackendProfileKey = suppressBackendProfileKey;
     if (!suppressBackendProfileKey) {
       this.proudxBackendProfileOverride = null;
+      clearProudxDelegatedBackendRoutingScope();
       this.permissionFunction = proudxBasePermissionFunction;
     }
   }
@@ -1490,6 +1493,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     if (!suppressBackendProfileKey) {
       this.proudxSuppressBackendProfileKey = false;
       this.proudxBackendProfileOverride = null;
+      clearProudxDelegatedBackendRoutingScope();
       this.permissionFunction = proudxBasePermissionFunction;
       return;
     }
@@ -1499,6 +1503,43 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     this.proudxBackendProfileOverride = delegatedProfile;
     this.permissionFunction = createProudxDelegatedPermissionFunction(delegatedProfile);
     this.proudxSuppressBackendProfileKey = true;
+  }
+
+  /**
+   * Optionally constrains ProudX delegated backend forwarding to specific backend server names.
+   *
+   * <p>If no allowed servers are configured, ProudX preserves the legacy global delegated behavior.
+   *
+   * @param regionId optional diagnostic region identifier associated with this delegated scope
+   * @param allowedBackendServers case-insensitive backend server allowlist, or empty for legacy
+   *                              unrestricted behavior
+   */
+  public void setProudxDelegatedBackendRoutingScope(@Nullable String regionId,
+                                                    Collection<String> allowedBackendServers) {
+    this.proudxDelegatedBackendRegionId = normalizeProudxRegionId(regionId);
+    if (allowedBackendServers == null || allowedBackendServers.isEmpty()) {
+      this.proudxDelegatedBackendAllowedServers = Set.of();
+      return;
+    }
+
+    Set<String> normalizedServerNames = new HashSet<>();
+    for (String serverName : allowedBackendServers) {
+      String normalized = normalizeProudxServerName(serverName);
+      if (!normalized.isEmpty()) {
+        normalizedServerNames.add(normalized);
+      }
+    }
+    this.proudxDelegatedBackendAllowedServers = normalizedServerNames.isEmpty()
+        ? Set.of()
+        : Set.copyOf(normalizedServerNames);
+  }
+
+  /**
+   * Clears the optional ProudX delegated routing scope and restores legacy unrestricted behavior.
+   */
+  public void clearProudxDelegatedBackendRoutingScope() {
+    this.proudxDelegatedBackendRegionId = "";
+    this.proudxDelegatedBackendAllowedServers = Set.of();
   }
 
   private PermissionFunction createProudxDelegatedPermissionFunction(GameProfile delegatedProfile) {
@@ -1543,6 +1584,60 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   }
 
   /**
+   * Returns whether ProudX delegated backend forwarding is currently scoped to specific backends.
+   *
+   * @return {@code true} when an explicit backend allowlist is active
+   */
+  public boolean hasProudxDelegatedBackendRoutingScope() {
+    return !proudxDelegatedBackendAllowedServers.isEmpty();
+  }
+
+  /**
+   * Returns the optional delegated routing region id associated with the current ProudX scope.
+   *
+   * @return the normalized region id, or an empty string when no region is associated
+   */
+  public String getProudxDelegatedBackendRegionId() {
+    return proudxDelegatedBackendRegionId;
+  }
+
+  /**
+   * Returns whether a backend server may receive the current ProudX delegated profile.
+   *
+   * @param serverName the backend server name
+   * @return {@code true} when no scope is configured or the server is explicitly allowed
+   */
+  public boolean isProudxDelegatedBackendServerAllowed(@Nullable String serverName) {
+    if (!hasProudxDelegatedBackendRoutingScope()) {
+      return true;
+    }
+    String normalizedServerName = normalizeProudxServerName(serverName);
+    return !normalizedServerName.isEmpty()
+        && proudxDelegatedBackendAllowedServers.contains(normalizedServerName);
+  }
+
+  /**
+   * Returns whether ProudX delegated backend forwarding should be active for the current server.
+   *
+   * @return {@code true} when delegated forwarding is enabled and the current server is in scope
+   */
+  public boolean isProudxDelegatedBackendProfileActiveOnCurrentServer() {
+    return isProudxDelegatedBackendProfileActiveForServer(getCurrentServer()
+        .map(serverConnection -> serverConnection.getServerInfo().getName())
+        .orElse(""));
+  }
+
+  /**
+   * Returns whether ProudX delegated backend forwarding should be active for a target backend.
+   *
+   * @param serverName the backend server name
+   * @return {@code true} when delegated forwarding is enabled and the server is in scope
+   */
+  public boolean isProudxDelegatedBackendProfileActiveForServer(@Nullable String serverName) {
+    return proudxSuppressBackendProfileKey && isProudxDelegatedBackendServerAllowed(serverName);
+  }
+
+  /**
    * Returns whether the current proxy configuration can apply ProudX backend profile-key
    * suppression.
    *
@@ -1558,7 +1653,22 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
    * @return the delegated backend profile when active, otherwise the regular proxy profile
    */
   public GameProfile getProudxBackendGameProfile() {
-    GameProfile override = proudxBackendProfileOverride;
+    GameProfile override = isProudxDelegatedBackendProfileActiveOnCurrentServer()
+        ? proudxBackendProfileOverride
+        : null;
+    return override == null ? profile : override;
+  }
+
+  /**
+   * Returns the profile that should be sent to a specific backend login/forwarding target.
+   *
+   * @param serverName the backend server name
+   * @return the delegated backend profile when active for the target, otherwise the regular profile
+   */
+  public GameProfile getProudxBackendGameProfileForServer(@Nullable String serverName) {
+    GameProfile override = isProudxDelegatedBackendProfileActiveForServer(serverName)
+        ? proudxBackendProfileOverride
+        : null;
     return override == null ? profile : override;
   }
 
@@ -1569,6 +1679,22 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
    */
   public String getProudxEffectiveUsername() {
     return getProudxBackendGameProfile().getName();
+  }
+
+  private static String normalizeProudxServerName(@Nullable String serverName) {
+    if (serverName == null) {
+      return "";
+    }
+    String trimmed = serverName.trim();
+    return trimmed.isEmpty() ? "" : trimmed.toLowerCase(Locale.ROOT);
+  }
+
+  private static String normalizeProudxRegionId(@Nullable String regionId) {
+    if (regionId == null) {
+      return "";
+    }
+    String trimmed = regionId.trim();
+    return trimmed.isEmpty() ? "" : trimmed.toLowerCase(Locale.ROOT);
   }
 
   private static final class ProudxDelegatedPermissionSubject implements InvocationHandler {
@@ -1877,7 +2003,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     }
 
     private boolean shouldSuppressProudxDelegatedConnectionNotice() {
-      return ConnectedPlayer.this.isProudxSuppressBackendProfileKey();
+      return ConnectedPlayer.this.isProudxDelegatedBackendProfileActiveOnCurrentServer();
     }
   }
 }

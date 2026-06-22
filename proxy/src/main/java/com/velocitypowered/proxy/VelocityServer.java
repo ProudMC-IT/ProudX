@@ -218,6 +218,16 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
         : currentConfiguration.getPlayerInfoForwardingMode().name();
   }
 
+  /**
+   * Backwards-compatible alias retained for existing ProudAuth runtime detection.
+   *
+   * @return the current forwarding mode name, or {@code UNKNOWN} before configuration load
+   */
+  @SuppressWarnings("checkstyle:AbbreviationAsWordInName")
+  public String getProudXPlayerInfoForwardingMode() {
+    return getProudxPlayerInfoForwardingMode();
+  }
+
   @Override
   public ProxyVersion getVersion() {
     Package pkg = VelocityServer.class.getPackage();

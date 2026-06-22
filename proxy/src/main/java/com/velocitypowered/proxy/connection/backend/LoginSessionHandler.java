@@ -94,28 +94,40 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
         requestedForwardingVersion = packet.content().readByte();
       }
       ConnectedPlayer player = serverConn.getPlayer();
+      String backendServerName = serverConn.getServerInfo().getName();
+      boolean delegatedProfileActive = forwardingMode == PlayerInfoForwarding.PROUDX
+          && player.isProudxDelegatedBackendProfileActiveForServer(backendServerName);
       int effectiveForwardingVersion = forwardingMode == PlayerInfoForwarding.PROUDX
-          && player.isProudxSuppressBackendProfileKey()
+          && delegatedProfileActive
           ? PlayerDataForwarding.MODERN_DEFAULT
           : requestedForwardingVersion;
       ByteBuf forwardingData = PlayerDataForwarding.createForwardingData(
           configuration.getForwardingSecret(),
           serverConn.getPlayerRemoteAddressAsString(),
           player.getProtocolVersion(),
-          player.getProudxBackendGameProfile(),
-          backendIdentifiedKey(forwardingMode, player),
+          player.getProudxBackendGameProfileForServer(backendServerName),
+          backendIdentifiedKey(forwardingMode, player, backendServerName),
           effectiveForwardingVersion);
       if (forwardingMode == PlayerInfoForwarding.PROUDX
-          && player.isProudxSuppressBackendProfileKey()) {
+          && player.isProudxSuppressBackendProfileKey()
+          && !delegatedProfileActive
+          && player.hasProudxDelegatedBackendRoutingScope()) {
+        logger.info(
+            "[ProudX] skipped delegated modern forwarding outside scope: proxyPlayer={} backend={} "
+                + "scopeRegion={}",
+            player.getUsername(),
+            backendServerName,
+            player.getProudxDelegatedBackendRegionId());
+      } else if (delegatedProfileActive) {
         logger.info(
             "[ProudX] delegated modern forwarding: proxyPlayer={} backendName={} "
                 + "backendUuid={} requestedVersion={} effectiveVersion={} keyForwarded={}",
             player.getUsername(),
-            player.getProudxBackendGameProfile().getName(),
-            player.getProudxBackendGameProfile().getId(),
+            player.getProudxBackendGameProfileForServer(backendServerName).getName(),
+            player.getProudxBackendGameProfileForServer(backendServerName).getId(),
             requestedForwardingVersion,
             effectiveForwardingVersion,
-            backendIdentifiedKey(forwardingMode, player) != null);
+            backendIdentifiedKey(forwardingMode, player, backendServerName) != null);
       }
 
       LoginPluginResponsePacket response = new LoginPluginResponsePacket(
@@ -239,9 +251,11 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
     return forwardingMode == PlayerInfoForwarding.MODERN || forwardingMode == PlayerInfoForwarding.PROUDX;
   }
 
-  private static IdentifiedKey backendIdentifiedKey(PlayerInfoForwarding forwardingMode, ConnectedPlayer player) {
+  private static IdentifiedKey backendIdentifiedKey(PlayerInfoForwarding forwardingMode,
+                                                    ConnectedPlayer player,
+                                                    String backendServerName) {
     if (forwardingMode == PlayerInfoForwarding.PROUDX
-        && player.isProudxSuppressBackendProfileKey()) {
+        && player.isProudxDelegatedBackendProfileActiveForServer(backendServerName)) {
       return null;
     }
     return player.getIdentifiedKey();

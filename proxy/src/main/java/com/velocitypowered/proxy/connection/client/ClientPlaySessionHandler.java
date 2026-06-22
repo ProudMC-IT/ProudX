@@ -278,7 +278,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(SessionChatSessionUpdatePacket packet) {
-    if (player.isProudxSuppressBackendProfileKey()) {
+    if (player.isProudxDelegatedBackendProfileActiveOnCurrentServer()) {
       logger.info("[ProudX] dropped delegated chat session update: proxyPlayer={} backendProfile={}",
           player.getUsername(), player.getProudxBackendGameProfile().getName());
       return true;

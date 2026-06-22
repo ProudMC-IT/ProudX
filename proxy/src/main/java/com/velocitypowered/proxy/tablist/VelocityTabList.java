@@ -254,7 +254,7 @@ public class VelocityTabList implements InternalTabList {
 
   private @Nullable ChatSession visibleChatSession(VelocityTabListEntry entry) {
     ChatSession session = entry.getChatSession();
-    if (session == null || !player.isProudxSuppressBackendProfileKey()) {
+    if (session == null || !player.isProudxDelegatedBackendProfileActiveOnCurrentServer()) {
       return session;
     }
     UUID delegatedProfileId = player.getProudxBackendGameProfile().getId();
@@ -264,7 +264,7 @@ public class VelocityTabList implements InternalTabList {
   private void sanitizeProudxDelegatedEntry(UpsertPlayerInfoPacket.Action action,
                                             UpsertPlayerInfoPacket.Entry entry) {
     if (action != UpsertPlayerInfoPacket.Action.INITIALIZE_CHAT
-        || !player.isProudxSuppressBackendProfileKey()) {
+        || !player.isProudxDelegatedBackendProfileActiveOnCurrentServer()) {
       return;
     }
     UUID delegatedProfileId = player.getProudxBackendGameProfile().getId();

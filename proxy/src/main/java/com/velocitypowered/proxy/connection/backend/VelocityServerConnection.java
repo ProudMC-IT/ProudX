@@ -199,10 +199,25 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
 
     mc.setProtocolVersion(protocolVersion);
     mc.setActiveSessionHandler(StateRegistry.LOGIN);
-    GameProfile backendProfile = proxyPlayer.getProudxBackendGameProfile();
-    IdentifiedKey backendIdentifiedKey = backendIdentifiedKey(forwardingMode);
+    String backendServerName = registeredServer.getServerInfo().getName();
+    boolean delegatedProfileActive = forwardingMode == PlayerInfoForwarding.PROUDX
+        && proxyPlayer.isProudxDelegatedBackendProfileActiveForServer(backendServerName);
     if (forwardingMode == PlayerInfoForwarding.PROUDX
-        && proxyPlayer.isProudxSuppressBackendProfileKey()) {
+        && proxyPlayer.isProudxSuppressBackendProfileKey()
+        && !delegatedProfileActive
+        && proxyPlayer.hasProudxDelegatedBackendRoutingScope()) {
+      logger.info(
+          "[ProudX] skipped delegated backend login outside scope: proxyPlayer={} backend={} "
+              + "scopeRegion={} allowedServersConfigured={}",
+          proxyPlayer.getUsername(),
+          backendServerName,
+          proxyPlayer.getProudxDelegatedBackendRegionId(),
+          true);
+    }
+
+    GameProfile backendProfile = proxyPlayer.getProudxBackendGameProfileForServer(backendServerName);
+    IdentifiedKey backendIdentifiedKey = backendIdentifiedKey(forwardingMode, backendServerName);
+    if (delegatedProfileActive) {
       logger.info(
           "[ProudX] delegated backend login: proxyPlayer={} backendName={} backendUuid={} "
               + "properties={} keyForwarded={} loginName={} holderUuid={}",
@@ -226,9 +241,10 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
     mc.flush();
   }
 
-  private @Nullable IdentifiedKey backendIdentifiedKey(PlayerInfoForwarding forwardingMode) {
+  private @Nullable IdentifiedKey backendIdentifiedKey(PlayerInfoForwarding forwardingMode,
+                                                       String backendServerName) {
     if (forwardingMode == PlayerInfoForwarding.PROUDX
-        && proxyPlayer.isProudxSuppressBackendProfileKey()) {
+        && proxyPlayer.isProudxDelegatedBackendProfileActiveForServer(backendServerName)) {
       return null;
     }
     return proxyPlayer.getIdentifiedKey();
